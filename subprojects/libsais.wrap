@@ -1,0 +1,5 @@
+[wrap-git]
+directory = libsais.git
+url = https://github.com/IlyaGrebnov/libsais
+revision = 'v2.9.1'
+
