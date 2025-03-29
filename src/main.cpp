@@ -105,16 +105,22 @@ auto main(int argc, char *argv[]) -> int {
 
   size_t input_len = genome.size();
 
-  if (input_len >= std::numeric_limits<int32_t>::max()) {
-    std::vector<int64_t> sa(genome.size(), 0);
-    int64_t ret = build_text_sa(reinterpret_cast<const uint8_t*>(genome.c_str()), sa, genome.size(), static_cast<int32_t>(nthreads), logger);
-    (void)ret;
-    write_output(output, sa);
+  // this can certainly be made cleaner, but I'm just getting it working now; this dispatches
+  // based on the size of the input.
+  if (in_ty == InputType::DNA or in_ty == InputType::Text) {
+    if (input_len >= std::numeric_limits<int32_t>::max()) {
+      std::vector<int64_t> sa(genome.size(), 0);
+      int64_t ret = build_text_sa(reinterpret_cast<const uint8_t*>(genome.c_str()), sa, genome.size(), static_cast<int32_t>(nthreads), logger);
+      (void)ret;
+      write_output(output, sa);
+    } else {
+      std::vector<int32_t> sa(genome.size(), 0);
+      int32_t ret = build_text_sa(reinterpret_cast<const uint8_t*>(genome.c_str()), sa, genome.size(), static_cast<int32_t>(nthreads), logger);
+      (void)ret;
+      write_output(output, sa);
+    }
   } else {
-    std::vector<int32_t> sa(genome.size(), 0);
-    int32_t ret = build_text_sa(reinterpret_cast<const uint8_t*>(genome.c_str()), sa, genome.size(), static_cast<int32_t>(nthreads), logger);
-    (void)ret;
-    write_output(output, sa);
+    LOG_WARNING(logger, "integer alphabet input type is not yet supported.");
   }
 
   return 0;
