@@ -4,17 +4,34 @@ cmake = import('cmake')
 
 # Configure the CMake project
 sais_proj = cmake.subproject('libsais')
+
+fs = import('fs')
+if fs.exists('subprojects/libsais.git/VERSION')
+  message('found VERSION file in libsais')
+  cmd = run_command(
+    'rm',
+    'subprojects/libsais.git/VERSION',
+    check: true 
+  )
+  cmd = run_command(
+    'touch',
+    'subprojects/libsais.git/VERSION',
+    check: true
+  )
+else
+  message('did not find VERSION file in libsais')
+endif
+
 kseqpp_proj = cmake.subproject('kseqpp')
 
 # Fetch the dependency object
 sais_lib = sais_proj.dependency('libsais')
 kseqpp_lib = kseqpp_proj.dependency('kseq++')
 
-cm_deps = [sais_lib, kseqpp_lib]
+zdep = dependency('zlib', version : '>=1.2.8')
+
+cm_deps = [sais_lib, kseqpp_lib, zdep]
 
 incdir = include_directories('include')
 
-add_project_arguments(['-lstdc++', '-lm'], language: 'cpp')
 executable('driver', ['src/main.cpp'], include_directories: incdir, dependencies: cm_deps)
-
-#https://github.com/IlyaGrebnov/libsais/blob/master/CMakeLists.txt
