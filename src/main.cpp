@@ -1,20 +1,97 @@
 #include "CLI11.hpp"
 #include "kseq++/seqio.hpp"
 #include "libsais.h"
+#include "libsais64.h"
+
+// logger
+#include "quill/Backend.h"
+#include "quill/Frontend.h"
+#include "quill/LogMacros.h"
+#include "quill/Logger.h"
+#include "quill/sinks/ConsoleSink.h"
+#include "quill/std/Array.h"
+
+// std
+#include <utility>
 #include <iostream>
 #include <string>
+#include <map>
 #include <vector>
+#include <sstream>
+#include <cstdint>
+#include <limits>
+
+enum class InputType : uint8_t { DNA, Text, Integer };
+
+
+template <typename IdxT>
+IdxT build_text_sa(const uint8_t* text, std::vector<IdxT>& sa, size_t len, int32_t nthreads, quill::Logger* logger) {
+  IdxT ret = 0;
+  if constexpr (std::is_same_v<IdxT, std::int32_t>) {
+    LOG_INFO(logger, "using 32-bit (int32_t) indices");
+    if (nthreads == 1) {
+      ret = libsais(text, sa.data(), len, 0, nullptr);
+    } else {
+      ret = libsais_omp(text, sa.data(), len, 0, nullptr, nthreads);
+    }
+  } else {
+    LOG_INFO(logger, "using 64-bit (int32_t) indices");
+    if (nthreads == 1) {
+      ret = libsais64(text, sa.data(), len, 0, nullptr);
+    } else {
+      ret = libsais64_omp(text, sa.data(), len, 0, nullptr, nthreads);
+    }
+  }
+
+  if (ret != 0) {
+    LOG_ERROR(logger, "error: libsais return code", ret);
+  }
+  LOG_INFO(logger, "ret :{}", ret);
+
+  return ret;
+}
+
+template <typename IdxT>
+int write_output(const std::string& output, const std::vector<IdxT>& sa) {
+  std::ofstream out(output, std::ios::binary);
+  uint64_t nelem = static_cast<uint64_t>(sa.size());
+  uint8_t elem_size = sizeof(decltype(sa[0]));
+  out.write(reinterpret_cast<char*>(&nelem), sizeof(nelem));
+  out.write(reinterpret_cast<char*>(&elem_size), sizeof(elem_size));
+  out.write(reinterpret_cast<const char*>(sa.data()), elem_size * nelem);
+  out.close();
+  return 0;
+}
 
 auto main(int argc, char *argv[]) -> int {
+  quill::Backend::start();
+  // Frontend
+  auto console_sink = quill::Frontend::create_or_get_sink<quill::ConsoleSink>("sink_id_1");
+  quill::Logger* logger = quill::Frontend::create_or_get_logger("root", std::move(console_sink));
+
+
   CLI::App app{"libsais driver"};
   argv = app.ensure_utf8(argv);
 
   std::string filename = "default";
-  app.add_option("-f,--file", filename, "A help string");
+  std::string output = "default";
+  size_t nthreads = 4;
+  app.add_option("-f,--file", filename, "input filename");
+  app.add_option("-o,--output", output, "output filename")->required();
 
+  // specify string->value mappings
+  InputType in_ty{InputType::DNA};
+  std::map<std::string, InputType> map{{"dna", InputType::DNA}, {"text", InputType::Text}, {"integer", InputType::Integer}};
+  app.add_option("--input-type", in_ty, "input type")->required()->transform(CLI::CheckedTransformer(map, CLI::ignore_case));
+
+
+  app.add_option("-t,--threads", nthreads, "number of threads");
   CLI11_PARSE(app, argc, argv);
-
-  std::cout << "file: " << filename << "\n";
+    
+  std::string type_str = (in_ty == InputType::DNA) ? "dna" : 
+    (in_ty == InputType::Text) ? "text" : "integer";
+  LOG_INFO(logger, "input_types: {}", type_str);
+  LOG_INFO(logger, "file :{}", filename);
 
   std::string genome;
   using klibpp::KSeq;
@@ -22,33 +99,24 @@ auto main(int argc, char *argv[]) -> int {
   KSeq record;
   SeqStreamIn iss(filename.c_str());
   while (iss >> record) {
-    std::cout << record.name << std::endl;
-    if (!record.comment.empty())
-      std::cout << record.comment << std::endl;
-    std::cout << record.seq << std::endl;
-    if (!record.qual.empty())
-      std::cout << record.qual << std::endl;
-
+    LOG_INFO(logger, "genome size is : {}", record.seq.size());
     genome = record.seq;
   }
 
-  std::vector<int32_t> sa(genome.size(), 0);
-  int32_t ret = libsais(reinterpret_cast<const uint8_t *>(genome.c_str()),
-                        sa.data(), genome.size(), 0, nullptr);
+  size_t input_len = genome.size();
 
-  if (ret != 0) {
-    std::cerr << "error: return code " << ret << "\n";
+  if (input_len >= std::numeric_limits<int32_t>::max()) {
+    std::vector<int64_t> sa(genome.size(), 0);
+    int64_t ret = build_text_sa(reinterpret_cast<const uint8_t*>(genome.c_str()), sa, genome.size(), static_cast<int32_t>(nthreads), logger);
+    (void)ret;
+    write_output(output, sa);
+  } else {
+    std::vector<int32_t> sa(genome.size(), 0);
+    int32_t ret = build_text_sa(reinterpret_cast<const uint8_t*>(genome.c_str()), sa, genome.size(), static_cast<int32_t>(nthreads), logger);
+    (void)ret;
+    write_output(output, sa);
   }
-  std::cout << "ret = " << ret << "\n";
-  std::cout << "SA = [";
-  for (size_t i = 0; i < sa.size(); ++i) {
-    std::cout << sa[i];
-    if (i < sa.size() - 1) {
-      std::cout << ", ";
-    } else {
-      std::cout << "]\n";
-    }
-  }
+
   return 0;
 }
 
