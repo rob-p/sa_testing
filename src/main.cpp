@@ -53,38 +53,22 @@ IdxT build_text_sa(const uint8_t* text, std::vector<IdxT>& sa, size_t len, int32
 }
 
 template <typename IdxT>
-IdxT build_int_sa(IdxT* text, std::vector<IdxT>& sa, size_t len, int32_t nthreads, quill::Logger* logger) {
+IdxT build_int_sa(IdxT* text, std::vector<IdxT>& sa, size_t len, IdxT max_token, int32_t nthreads, quill::Logger* logger) {
   IdxT ret = 0;
   if constexpr (std::is_same_v<IdxT, std::int32_t>) {
     LOG_INFO(logger, "int alphabet using 32-bit (int32_t) indices");
-    int64_t m = 0;
-    for (size_t i = 0; i < len; ++i) {
-      if (text[i] > m) { m = text[i]; }
-    }
     if (nthreads == 1) {
-      ret = libsais64_long(text, sa.data(), len, m, 0);
+      ret = libsais_int(text, sa.data(), len, max_token, 0);
     } else {
-      ret = libsais64_long_omp(text, sa.data(), len, m, 0, nthreads);
+      ret = libsais_int_omp(text, sa.data(), len, max_token, 0, nthreads);
     }
   } else {
     LOG_INFO(logger, "int alphabet using 64-bit (int64_t) indices");
-    int64_t m = 0;
-    for (size_t i = 0; i < len; ++i) {
-      if (text[i] > m) { m = text[i]; }
-    }
     if (nthreads == 1) {
-      ret = libsais64_long(text, sa.data(), len, m, 0);
+      ret = libsais64_long(text, sa.data(), len, max_token, 0);
     } else {
-      ret = libsais64_long_omp(text, sa.data(), len, m, 0, nthreads);
+      ret = libsais64_long_omp(text, sa.data(), len, max_token, 0, nthreads);
     }
-    /*
-    LOG_INFO(logger, "using 64-bit (int32_t) indices");
-    if (nthreads == 1) {
-      ret = libsais64(text, sa.data(), len, 0, nullptr);
-    } else {
-      ret = libsais64_omp(text, sa.data(), len, 0, nullptr, nthreads);
-    }
-    */
   }
 
   if (ret != 0) {
@@ -138,7 +122,9 @@ auto main(int argc, char *argv[]) -> int {
   LOG_INFO(logger, "file :{}", filename);
 
   std::string genome;
-  std::vector<int64_t> int_genome;
+  std::vector<int32_t> int32_genome;
+  std::vector<int64_t> int64_genome;
+  uint64_t max_token{0};
 
   switch (in_ty) {
     case InputType::DNA:
@@ -167,8 +153,16 @@ auto main(int argc, char *argv[]) -> int {
         std::ifstream ifile(filename, std::ios::binary);
         uint64_t len{0};
         ifile.read(reinterpret_cast<char*>(&len), sizeof(len));
-        int_genome.resize(len);
-        ifile.read(reinterpret_cast<char*>(int_genome.data()), sizeof(len)*len);
+        ifile.read(reinterpret_cast<char*>(&len), sizeof(len));
+
+        // if the length or the max token is too large for 32-bits, then the file is 64-bits
+        if (len >= std::numeric_limits<int32_t>::max() or max_token >= std::numeric_limits<int32_t>::max()) {
+          int64_genome.resize(len);
+          ifile.read(reinterpret_cast<char*>(int64_genome.data()), sizeof(len)*len);
+        } else {
+          int32_genome.resize(len);
+          ifile.read(reinterpret_cast<char*>(int32_genome.data()), sizeof(len)*len);
+        }
       }
   }
 
@@ -189,10 +183,18 @@ auto main(int argc, char *argv[]) -> int {
       write_output(output, sa);
     }
   } else {
-      std::vector<int64_t> sa(int_genome.size(), 0);
-      int64_t ret = build_int_sa(int_genome.data(), sa, int_genome.size(), static_cast<int32_t>(nthreads), logger);
+    // 32-bit
+    if (int64_genome.empty()) {
+      std::vector<int32_t> sa(int32_genome.size(), 0);
+      int32_t ret = build_int_sa(int32_genome.data(), sa, int32_genome.size(), static_cast<int32_t>(max_token), static_cast<int32_t>(nthreads), logger);
       (void)ret;
       write_output(output, sa);
+    } else {
+      std::vector<int64_t> sa(int64_genome.size(), 0);
+      int64_t ret = build_int_sa(int64_genome.data(), sa, int64_genome.size(), static_cast<int64_t>(max_token), static_cast<int32_t>(nthreads), logger);
+      (void)ret;
+      write_output(output, sa);
+    }
   }
 
   return 0;
