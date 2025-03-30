@@ -20,6 +20,7 @@
 #include <sstream>
 #include <cstdint>
 #include <limits>
+#include <filesystem>
 
 enum class InputType : uint8_t { DNA, Text, Integer };
 
@@ -94,13 +95,32 @@ auto main(int argc, char *argv[]) -> int {
   LOG_INFO(logger, "file :{}", filename);
 
   std::string genome;
-  using klibpp::KSeq;
-  using klibpp::SeqStreamIn;
-  KSeq record;
-  SeqStreamIn iss(filename.c_str());
-  while (iss >> record) {
-    LOG_INFO(logger, "genome size is : {}", record.seq.size());
-    genome = record.seq;
+
+  switch (in_ty) {
+    case InputType::DNA:
+      {
+        using klibpp::KSeq;
+        using klibpp::SeqStreamIn;
+        KSeq record;
+        SeqStreamIn iss(filename.c_str());
+        while (iss >> record) {
+          LOG_INFO(logger, "genome size is : {}", record.seq.size());
+          genome = record.seq;
+        }
+      }
+      break;
+    case InputType::Text:
+      {
+        std::filesystem::path p{filename};
+        size_t fsize = std::filesystem::file_size(p);
+        genome.resize(fsize);
+        std::ifstream ifile(filename, std::ios::binary);
+        ifile.read(reinterpret_cast<char*>(genome.data()), genome.size());
+      }
+      break;
+    case InputType::Integer:
+      LOG_WARNING(logger, "integer input not yet supported");
+
   }
 
   size_t input_len = genome.size();
