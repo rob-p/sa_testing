@@ -153,7 +153,7 @@ auto main(int argc, char *argv[]) -> int {
         std::ifstream ifile(filename, std::ios::binary);
         uint64_t len{0};
         ifile.read(reinterpret_cast<char*>(&len), sizeof(len));
-        ifile.read(reinterpret_cast<char*>(&len), sizeof(len));
+        ifile.read(reinterpret_cast<char*>(&max_token), sizeof(max_token));
 
         // if the length or the max token is too large for 32-bits, then the file is 64-bits
         if (len >= std::numeric_limits<int32_t>::max() or max_token >= std::numeric_limits<int32_t>::max()) {
