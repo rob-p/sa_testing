@@ -53,6 +53,49 @@ IdxT build_text_sa(const uint8_t* text, std::vector<IdxT>& sa, size_t len, int32
 }
 
 template <typename IdxT>
+IdxT build_int_sa(IdxT* text, std::vector<IdxT>& sa, size_t len, int32_t nthreads, quill::Logger* logger) {
+  IdxT ret = 0;
+  if constexpr (std::is_same_v<IdxT, std::int32_t>) {
+    LOG_INFO(logger, "int alphabet using 32-bit (int32_t) indices");
+    int64_t m = 0;
+    for (size_t i = 0; i < len; ++i) {
+      if (text[i] > m) { m = text[i]; }
+    }
+    if (nthreads == 1) {
+      ret = libsais64_long(text, sa.data(), len, m, 0);
+    } else {
+      ret = libsais64_long_omp(text, sa.data(), len, m, 0, nthreads);
+    }
+  } else {
+    LOG_INFO(logger, "int alphabet using 64-bit (int64_t) indices");
+    int64_t m = 0;
+    for (size_t i = 0; i < len; ++i) {
+      if (text[i] > m) { m = text[i]; }
+    }
+    if (nthreads == 1) {
+      ret = libsais64_long(text, sa.data(), len, m, 0);
+    } else {
+      ret = libsais64_long_omp(text, sa.data(), len, m, 0, nthreads);
+    }
+    /*
+    LOG_INFO(logger, "using 64-bit (int32_t) indices");
+    if (nthreads == 1) {
+      ret = libsais64(text, sa.data(), len, 0, nullptr);
+    } else {
+      ret = libsais64_omp(text, sa.data(), len, 0, nullptr, nthreads);
+    }
+    */
+  }
+
+  if (ret != 0) {
+    LOG_ERROR(logger, "error: libsais return code", ret);
+  }
+  LOG_INFO(logger, "ret :{}", ret);
+
+  return ret;
+}
+
+template <typename IdxT>
 int write_output(const std::string& output, const std::vector<IdxT>& sa) {
   std::ofstream out(output, std::ios::binary);
   uint64_t nelem = static_cast<uint64_t>(sa.size());
@@ -95,6 +138,7 @@ auto main(int argc, char *argv[]) -> int {
   LOG_INFO(logger, "file :{}", filename);
 
   std::string genome;
+  std::vector<int64_t> int_genome;
 
   switch (in_ty) {
     case InputType::DNA:
@@ -119,8 +163,13 @@ auto main(int argc, char *argv[]) -> int {
       }
       break;
     case InputType::Integer:
-      LOG_WARNING(logger, "integer input not yet supported");
-
+      {
+        std::ifstream ifile(filename, std::ios::binary);
+        uint64_t len{0};
+        ifile.read(reinterpret_cast<char*>(&len), sizeof(len));
+        int_genome.resize(len);
+        ifile.read(reinterpret_cast<char*>(int_genome.data()), sizeof(len)*len);
+      }
   }
 
   size_t input_len = genome.size();
@@ -140,7 +189,10 @@ auto main(int argc, char *argv[]) -> int {
       write_output(output, sa);
     }
   } else {
-    LOG_WARNING(logger, "integer alphabet input type is not yet supported.");
+      std::vector<int64_t> sa(int_genome.size(), 0);
+      int64_t ret = build_int_sa(int_genome.data(), sa, int_genome.size(), static_cast<int32_t>(nthreads), logger);
+      (void)ret;
+      write_output(output, sa);
   }
 
   return 0;
