@@ -24,10 +24,12 @@
 
 enum class InputType : uint8_t { DNA, Text, Integer };
 
-
+// build a suffix array over input that is textual (i.e. "DNA" or "Text"), where the input characters
+// are encoded as `uint8_t`.
 template <typename IdxT>
 IdxT build_text_sa(const uint8_t* text, std::vector<IdxT>& sa, size_t len, int32_t nthreads, quill::Logger* logger) {
   IdxT ret = 0;
+  // if we are using 32-bit indices
   if constexpr (std::is_same_v<IdxT, std::int32_t>) {
     LOG_INFO(logger, "using 32-bit (int32_t) indices");
     if (nthreads == 1) {
@@ -36,6 +38,7 @@ IdxT build_text_sa(const uint8_t* text, std::vector<IdxT>& sa, size_t len, int32
       ret = libsais_omp(text, sa.data(), len, 0, nullptr, nthreads);
     }
   } else {
+    // if we are using 64-bit indices
     LOG_INFO(logger, "using 64-bit (int32_t) indices");
     if (nthreads == 1) {
       ret = libsais64(text, sa.data(), len, 0, nullptr);
@@ -43,7 +46,8 @@ IdxT build_text_sa(const uint8_t* text, std::vector<IdxT>& sa, size_t len, int32
       ret = libsais64_omp(text, sa.data(), len, 0, nullptr, nthreads);
     }
   }
-
+  
+  // log an error if the return code was non-zero
   if (ret != 0) {
     LOG_ERROR(logger, "error: libsais return code", ret);
   }
@@ -52,9 +56,14 @@ IdxT build_text_sa(const uint8_t* text, std::vector<IdxT>& sa, size_t len, int32
   return ret;
 }
 
+// build a suffix array over an integer alphabet input. In addition to taking the input (which can be 
+// an int32_t or int64_t), it also requires the maximum token, which is given as input to this function. 
+// This function performs no alphabet remapping, so if you want to remap the alphabet to a minimal/compacted
+// space, you should do that prior to calling this function.
 template <typename IdxT>
 IdxT build_int_sa(IdxT* text, std::vector<IdxT>& sa, size_t len, IdxT max_token, int32_t nthreads, quill::Logger* logger) {
   IdxT ret = 0;
+  // the integer alphabet (and text size) both fit in int32_t width
   if constexpr (std::is_same_v<IdxT, std::int32_t>) {
     LOG_INFO(logger, "int alphabet using 32-bit (int32_t) indices");
     if (nthreads == 1) {
@@ -63,6 +72,7 @@ IdxT build_int_sa(IdxT* text, std::vector<IdxT>& sa, size_t len, IdxT max_token,
       ret = libsais_int_omp(text, sa.data(), len, max_token, 0, nthreads);
     }
   } else {
+    // the integer alphabet (and text size) require int64_t width
     LOG_INFO(logger, "int alphabet using 64-bit (int64_t) indices");
     if (nthreads == 1) {
       ret = libsais64_long(text, sa.data(), len, max_token, 0);
@@ -71,6 +81,7 @@ IdxT build_int_sa(IdxT* text, std::vector<IdxT>& sa, size_t len, IdxT max_token,
     }
   }
 
+  // log and error if the return code was non-zero
   if (ret != 0) {
     LOG_ERROR(logger, "error: libsais return code", ret);
   }
@@ -79,6 +90,9 @@ IdxT build_int_sa(IdxT* text, std::vector<IdxT>& sa, size_t len, IdxT max_token,
   return ret;
 }
 
+// write the output suffix array to a file named `output`.  Here the suffix array 
+// will be either of int32_t type or int64_t.  No information about the size of the 
+// input alphabet (e.g. DNA, Text, Integer) is currently encoded in the output.
 template <typename IdxT>
 int write_output(const std::string& output, const std::vector<IdxT>& sa) {
   std::ofstream out(output, std::ios::binary);
@@ -95,8 +109,7 @@ auto main(int argc, char *argv[]) -> int {
   quill::Backend::start();
   // Frontend
   auto console_sink = quill::Frontend::create_or_get_sink<quill::ConsoleSink>("sink_id_1");
-  quill::Logger* logger = quill::Frontend::create_or_get_logger("root", std::move(console_sink));
-
+  quill::Logger* logger = quill::Frontend::create_or_get_logger("SA driver", std::move(console_sink));
 
   CLI::App app{"libsais driver"};
   argv = app.ensure_utf8(argv);
@@ -112,10 +125,10 @@ auto main(int argc, char *argv[]) -> int {
   std::map<std::string, InputType> map{{"dna", InputType::DNA}, {"text", InputType::Text}, {"integer", InputType::Integer}};
   app.add_option("--input-type", in_ty, "input type")->required()->transform(CLI::CheckedTransformer(map, CLI::ignore_case));
 
-
   app.add_option("-t,--threads", nthreads, "number of threads");
   CLI11_PARSE(app, argc, argv);
     
+  // decode the choice to a string; fancier solutions are available but we don't need them right now.
   std::string type_str = (in_ty == InputType::DNA) ? "dna" : 
     (in_ty == InputType::Text) ? "text" : "integer";
   LOG_INFO(logger, "input_types: {}", type_str);
@@ -129,18 +142,26 @@ auto main(int argc, char *argv[]) -> int {
   switch (in_ty) {
     case InputType::DNA:
       {
+        // read the input from a FASTA file
         using klibpp::KSeq;
         using klibpp::SeqStreamIn;
+        bool first_record = true;
         KSeq record;
         SeqStreamIn iss(filename.c_str());
         while (iss >> record) {
+          if (!first_record) {
+            LOG_WARNING(logger, "There was more than one record in the FASTA file, but generalized suffix arrays are not yet supported; just taking the first record.");
+            break;
+          }
           LOG_INFO(logger, "genome size is : {}", record.seq.size());
           genome = record.seq;
+          first_record = false;
         }
       }
       break;
     case InputType::Text:
       {
+        // read the input as a text string
         std::filesystem::path p{filename};
         size_t fsize = std::filesystem::file_size(p);
         genome.resize(fsize);
@@ -150,6 +171,7 @@ auto main(int argc, char *argv[]) -> int {
       break;
     case InputType::Integer:
       {
+        // read the input as an integer vector
         std::ifstream ifile(filename, std::ios::binary);
         uint64_t len{0};
         ifile.read(reinterpret_cast<char*>(&len), sizeof(len));
@@ -199,16 +221,3 @@ auto main(int argc, char *argv[]) -> int {
 
   return 0;
 }
-
-/**
- * Constructs the suffix array of a given string.
- * @param T [0..n-1] The input string.
- * @param SA [0..n-1+fs] The output array of suffixes.
- * @param n The length of the given string.
- * @param fs The extra space available at the end of SA array (0 should be
- * enough for most cases).
- * @param freq [0..255] The output symbol frequency table (can be NULL).
- * @return 0 if no error occurred, -1 or -2 otherwise.
- */
-//    LIBSAIS_API int32_t libsais(const uint8_t * T, int32_t * SA, int32_t n,
-//    int32_t fs, int32_t * freq);
